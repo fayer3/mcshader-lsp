@@ -132,7 +132,7 @@ fn main() {
     let mut langserver = MinecraftShaderLanguageServer {
         endpoint: endpoint_output.clone(),
         graph: Rc::new(RefCell::new(cache_graph)),
-        root: "".into(),
+        root: Vec::new(),
         command_provider: None,
         opengl_context: Rc::new(opengl::OpenGlContext::new()),
         tree_sitter: Rc::new(RefCell::new(parser)),
@@ -166,7 +166,7 @@ fn main() {
 pub struct MinecraftShaderLanguageServer {
     endpoint: Endpoint,
     graph: Rc<RefCell<graph::CachedStableGraph>>,
-    root: PathBuf,
+    root: Vec<PathBuf>,
     command_provider: Option<commands::CustomCommandProvider>,
     opengl_context: Rc<dyn opengl::ShaderValidator>,
     tree_sitter: Rc<RefCell<Parser>>,
@@ -214,10 +214,11 @@ impl MinecraftShaderLanguageServer {
     }
 
     fn build_initial_graph(&self) {
-        info!("generating graph for current root"; "root" => self.root.to_str().unwrap());
+        for root in self.root.iter() {
+        info!("generating graph for current root"; "root" => root.to_str().unwrap());
 
         // filter directories and files not ending in any of the 3 extensions
-        WalkDir::new(&self.root)
+        WalkDir::new(&root)
             .into_iter()
             .filter_map(|entry| {
                 if entry.is_err() {
@@ -247,6 +248,7 @@ impl MinecraftShaderLanguageServer {
                 // file and add a file->includes KV into the map
                 self.add_file_and_includes_to_graph(&path);
             });
+        }
 
         info!("finished building project include graph");
     }
@@ -287,7 +289,12 @@ impl MinecraftShaderLanguageServer {
 
                 let full_include = if path.starts_with('/') {
                     path = path.strip_prefix('/').unwrap().to_string();
-                    self.root.join("shaders").join(PathBuf::from_slash(&path))
+                    let mut shaders_root: &Path = file;
+                    while shaders_root.parent() != None && !shaders_root.ends_with("shaders") {
+                        shaders_root = shaders_root.parent().unwrap();
+                    }
+                    shaders_root.join(PathBuf::from_slash(&path))
+                    //self.root.join("shaders").join(PathBuf::from_slash(&path))
                 } else {
                     file.parent().unwrap().join(PathBuf::from_slash(&path))
                 };
@@ -399,11 +406,11 @@ impl MinecraftShaderLanguageServer {
                 }
             };
 
-            if !is_top_level(root_path.strip_prefix(&self.root).unwrap()) {
+            /*if !is_top_level(root_path.strip_prefix(&self.root).unwrap()) {
                 warn!("got a non-valid toplevel file"; "root_ancestor" => root_path.to_str().unwrap(), "stripped" => root_path.strip_prefix(&self.root).unwrap().to_str().unwrap());
                 back_fill(&all_sources, &mut diagnostics);
                 return Ok(diagnostics);
-            }
+            }*/
 
             let tree_type = if ext == "fsh" {
                 TreeType::Fragment
@@ -447,10 +454,10 @@ impl MinecraftShaderLanguageServer {
                     None => continue,
                 };
 
-                if !is_top_level(root_path.strip_prefix(&self.root).unwrap()) {
+                /*if !is_top_level(root_path.strip_prefix(&self.root).unwrap()) {
                     warn!("got a non-valid toplevel file"; "root_ancestor" => root_path.to_str().unwrap(), "stripped" => root_path.strip_prefix(&self.root).unwrap().to_str().unwrap());
                     continue;
-                }
+                }*/
 
                 let tree_type = if ext == "fsh" {
                     TreeType::Fragment
@@ -605,8 +612,16 @@ impl LanguageServerHandling for MinecraftShaderLanguageServer {
                 })),
                 ..ServerCapabilities::default()
             };
-
-            let root = match params.root_uri {
+            info!("params {:?}", params);
+            if params.workspace_folders.is_none() {
+                completable.complete(Err(MethodError {
+                    code: 42069,
+                    message: "Must be in workspace".into(),
+                    data: InitializeError { retry: false },
+                }));
+                return;
+            }
+            /*let root = match params.root_uri {
                 Some(uri) => PathBuf::from_url(uri),
                 None => {
                     completable.complete(Err(MethodError {
@@ -616,7 +631,7 @@ impl LanguageServerHandling for MinecraftShaderLanguageServer {
                     }));
                     return;
                 }
-            };
+            };*/
 
             completable.complete(Ok(InitializeResult {
                 capabilities,
@@ -625,7 +640,10 @@ impl LanguageServerHandling for MinecraftShaderLanguageServer {
 
             self.set_status("loading", "Building dependency graph...", "$(loading~spin)");
 
-            self.root = root;
+
+            for roots in params.workspace_folders.unwrap() {
+                self.root.push(PathBuf::from_url(roots.uri))
+            };
 
 
             self.build_initial_graph();
@@ -666,7 +684,13 @@ impl LanguageServerHandling for MinecraftShaderLanguageServer {
         logging::slog_with_trace_id(|| {
             //info!("opened doc {}", params.text_document.uri);
             let path = PathBuf::from_url(params.text_document.uri);
-            if !path.starts_with(&self.root) {
+
+            
+            let mut inpath = false;
+            for root in self.root.as_slice() {
+                inpath = path.starts_with(root) || inpath;
+            }
+            if !inpath {
                 return;
             }
 
@@ -687,7 +711,11 @@ impl LanguageServerHandling for MinecraftShaderLanguageServer {
     fn did_save_text_document(&mut self, params: DidSaveTextDocumentParams) {
         logging::slog_with_trace_id(|| {
             let path = PathBuf::from_url(params.text_document.uri);
-            if !path.starts_with(&self.root) {
+            let mut inpath = false;
+            for root in self.root.as_slice() {
+                inpath = path.starts_with(root) || inpath;
+            }
+            if !inpath {
                 return;
             }
             self.update_includes(&path);
@@ -725,7 +753,7 @@ impl LanguageServerHandling for MinecraftShaderLanguageServer {
                 .command_provider
                 .as_ref()
                 .unwrap()
-                .execute(&params.command, &params.arguments, &self.root)
+                .execute(&params.command, &params.arguments, &self.root.get(0).unwrap())
             {
                 Ok(resp) => {
                     info!("executed command successfully"; "command" => params.command.clone());
@@ -764,7 +792,11 @@ impl LanguageServerHandling for MinecraftShaderLanguageServer {
     fn goto_definition(&mut self, params: TextDocumentPositionParams, completable: LSCompletable<Vec<Location>>) {
         logging::slog_with_trace_id(|| {
             let path = PathBuf::from_url(params.text_document.uri);
-            if !path.starts_with(&self.root) {
+            let mut inpath = false;
+            for root in self.root.as_slice() {
+                inpath = path.starts_with(root) || inpath;
+            }
+            if !inpath {
                 return;
             }
             let parser = &mut self.tree_sitter.borrow_mut();
@@ -793,7 +825,11 @@ impl LanguageServerHandling for MinecraftShaderLanguageServer {
     fn references(&mut self, params: ReferenceParams, completable: LSCompletable<Vec<Location>>) {
         logging::slog_with_trace_id(|| {
             let path = PathBuf::from_url(params.text_document_position.text_document.uri);
-            if !path.starts_with(&self.root) {
+            let mut inpath = false;
+            for root in self.root.as_slice() {
+                inpath = path.starts_with(root) || inpath;
+            }
+            if !inpath {
                 return;
             }
             let parser = &mut self.tree_sitter.borrow_mut();
@@ -826,7 +862,11 @@ impl LanguageServerHandling for MinecraftShaderLanguageServer {
     fn document_symbols(&mut self, params: DocumentSymbolParams, completable: LSCompletable<DocumentSymbolResponse>) {
         logging::slog_with_trace_id(|| {
             let path = PathBuf::from_url(params.text_document.uri);
-            if !path.starts_with(&self.root) {
+            let mut inpath = false;
+            for root in self.root.as_slice() {
+                inpath = path.starts_with(root) || inpath;
+            }
+            if !inpath {
                 return;
             }
             let parser = &mut self.tree_sitter.borrow_mut();

@@ -21,7 +21,7 @@
     "onLanguage:glsl",
     "workspaceContains:shaders/"
   ],
-  "extensionDependencies": [
+  "extensionPack": [
     "slevesque.shader"
   ],
   "main": "./client/out/extension",

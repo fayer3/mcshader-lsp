@@ -8,9 +8,10 @@
 			"name": "Launch Client",
 			"runtimeExecutable": "${execPath}",
             "env": {
-                "MCSHADER_DEBUG": "true"
+                "MCSHADER_DEBUG": "true",
+				"RUST_BACKTRACE" : "1"
             },
-			"args": ["--extensionDevelopmentPath=${workspaceRoot}"],
+			"args": ["--extensionDevelopmentPath=${workspaceRoot}", "F:\\Spiele\\minecraft\\neuer_launcher\\.minecraft\\shaderpacks\\Sildurs Enhanced Default v1.10_split", "F:\\Spiele\\minecraft\\neuer_launcher\\.minecraft\\shaderpacks\\Sildur's+Vibrant+Shaders+v1.32+Extreme-VL"],
 			"outFiles": ["${workspaceRoot}/client/out/**/*.js"],
 			"preLaunchTask": {
 				"type": "npm",

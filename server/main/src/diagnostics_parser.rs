@@ -30,7 +30,7 @@ impl<'a, T: opengl::ShaderValidator + ?Sized> DiagnosticsParser<'a, T> {
     fn get_line_regex(&self) -> &Regex {
         self.line_regex.get_or_init(|| match self.vendor_querier.vendor().as_str() {
             "NVIDIA Corporation" => {
-                Regex::new(r#"^(?P<filepath>\d+)\((?P<linenum>\d+)\) : (?P<severity>error|warning) [A-C]\d+: (?P<output>.+)"#).unwrap()
+                Regex::new(r#"^(?P<filepath>\d)?\((?P<linenum>\d+)\) : (?P<severity>error|warning) [A-C]\d+: (?P<output>.+)"#).unwrap()
             }
             _ => Regex::new(r#"^(?P<severity>ERROR|WARNING): (?P<filepath>[^?<>*|"\n]+):(?P<linenum>\d+): (?:'.*' :|[a-z]+\(#\d+\)) +(?P<output>.+)$"#)
                 .unwrap(),
@@ -62,10 +62,10 @@ impl<'a, T: opengl::ShaderValidator + ?Sized> DiagnosticsParser<'a, T> {
 
             let msg = diagnostic_capture.name("output").unwrap().as_str();
 
-            let line = match diagnostic_capture.name("linenum") {
+            let mut line = u32::saturating_sub(match diagnostic_capture.name("linenum") {
                 Some(c) => c.as_str().parse::<u32>().unwrap_or(0),
                 None => 0,
-            } - self.get_line_offset();
+            }, self.get_line_offset());
 
             // TODO: line matching maybe
             /* let line_text = source_lines[line as usize];
@@ -88,6 +88,10 @@ impl<'a, T: opengl::ShaderValidator + ?Sized> DiagnosticsParser<'a, T> {
                 }
                 None => uri.to_str().unwrap().to_string(),
             };
+
+            if diagnostic_capture.name("filepath") == None {
+                line = u32::MAX;
+            }
 
             let diagnostic = Diagnostic {
                 range: Range::new(

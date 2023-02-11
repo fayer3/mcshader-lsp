@@ -39,7 +39,7 @@ pub fn new_temp_server(opengl_context: Option<Box<dyn opengl::ShaderValidator>>)
     MinecraftShaderLanguageServer {
         endpoint,
         graph: Rc::new(RefCell::new(graph::CachedStableGraph::new())),
-        root: "".into(),
+        root: Vec::new(),
         command_provider: None,
         opengl_context: context.into(),
         log_guard: None,
@@ -59,7 +59,7 @@ fn copy_files(files: &str, dest: &TempDir) {
 pub fn copy_to_and_set_root(test_path: &str, server: &mut MinecraftShaderLanguageServer) -> (Rc<TempDir>, PathBuf) {
     let (_tmp_dir, tmp_path) = copy_to_tmp_dir(test_path);
 
-    server.root = tmp_path.clone(); //format!("{}{}", "file://", tmp_path);
+    server.root.push(tmp_path.clone()); //format!("{}{}", "file://", tmp_path);
 
     (_tmp_dir, tmp_path)
 }
@@ -117,7 +117,12 @@ fn test_empty_initialize() {
     let completable = MethodCompletable::new(ResponseCompletable::new(Some(Id::Number(1)), Box::new(on_response)));
     server.initialize(initialize_params, completable);
 
-    assert_eq!(server.root, tmp_path);
+    let mut inpath = false;
+    for root in server.root.as_slice() {
+        inpath = root.eq(tmp_path) || inpath;
+    }
+
+    assert_eq!(inpath, true);
 
     assert_eq!(server.graph.borrow().graph.edge_count(), 0);
     assert_eq!(server.graph.borrow().graph.node_count(), 0);
